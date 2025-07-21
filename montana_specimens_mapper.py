@@ -11,6 +11,13 @@ import os
 from typing import Dict, List, Tuple, Optional
 import re
 import sys
+import matplotlib as mpl
+
+# Import SVG backend explicitly to ensure it's available
+try:
+    import matplotlib.backends.backend_svg
+except ImportError:
+    print("Warning: SVG backend not available")
 
 # Montana County Map Generato
 # This application generates county-based maps for Montana using lat/long data
@@ -43,7 +50,9 @@ def get_icon_path():
         elif os.path.exists(png_path):
             return png_path
         else:
-            print("Warning: Icon files not found")
+            print(f"Warning: Icon files not found. Looked in: {base_path}")
+            print(f"ICO path: {ico_path}")
+            print(f"PNG path: {png_path}")
             return None
     except Exception as e:
         print(f"Warning: Error getting icon path: {str(e)}")
@@ -443,6 +452,9 @@ class MainApplication:
         self.selected_genus = tk.StringVar()
         self.selected_species = tk.StringVar()
         
+        # Add export format variable
+        self.export_format_var = tk.StringVar(value='tiff')  # Default to tiff
+        
         # Configure main window
         self.root.title("MontanaSpecimensMapper")
         self.root.state('zoomed')  # Start maximized
@@ -468,13 +480,50 @@ class MainApplication:
         self.main_container = ttk.Frame(self.root)
         self.main_container.pack(fill='both', expand=True, padx=10, pady=10)
         
-        # Left panel (inputs)
-        self.left_panel = ttk.Frame(self.main_container, style='TFrame')
-        self.left_panel.pack(side='left', fill='y', padx=(0, 10))
+        # Left panel container (23% width)
+        self.left_panel_container = ttk.Frame(self.main_container, style='TFrame')
+        self.left_panel_container.pack(side='left', fill='both', padx=(0, 10))
         
-        # Right panel (map display)
+        # Create canvas with scrollbar for left panel
+        self.left_canvas = tk.Canvas(self.left_panel_container, bg='white', highlightthickness=0)
+        self.left_scrollbar = ttk.Scrollbar(self.left_panel_container, orient="vertical", command=self.left_canvas.yview)
+        
+        # Create the actual left panel that will be scrolled
+        self.left_panel = ttk.Frame(self.left_canvas, style='TFrame')
+        
+        # Configure canvas
+        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
+        
+        # Pack scrollbar and canvas
+        self.left_scrollbar.pack(side="right", fill="y")
+        self.left_canvas.pack(side="left", fill="both", expand=True)
+        
+        # Add left panel to canvas
+        self.left_canvas_frame = self.left_canvas.create_window((0, 0), window=self.left_panel, anchor="nw")
+        
+        # Configure canvas scrolling
+        def configure_left_scroll_region(event):
+            self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+        
+        def configure_left_canvas_width(event):
+            self.left_canvas.itemconfig(self.left_canvas_frame, width=event.width)
+        
+        self.left_panel.bind('<Configure>', configure_left_scroll_region)
+        self.left_canvas.bind('<Configure>', configure_left_canvas_width)
+        
+        # Enable mousewheel scrolling for left panel
+        def on_left_mousewheel(event):
+            if self.left_canvas.winfo_exists():
+                self.left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        
+        self.left_canvas.bind_all("<MouseWheel>", on_left_mousewheel)
+        
+        # Right panel (map display) - 77% width
         self.right_panel = ttk.Frame(self.main_container, style='TFrame')
         self.right_panel.pack(side='right', fill='both', expand=True)
+        
+        # Set percentage-based widths after window is created
+        self.root.after(100, self.set_panel_widths)
         
         self._setup_input_fields()
         self._setup_map_display()
@@ -547,6 +596,20 @@ class MainApplication:
             color_entry.pack(side='left', fill='x', expand=True)
             
             self.color_ranges.append((min_var, max_var, color_var))
+        
+        # Export Format & Options Section
+        export_frame = ttk.LabelFrame(self.left_panel, text="Export Format & Options", padding="10")
+        export_frame.pack(fill='x', pady=(0, 20))
+        
+        # Radio buttons for format selection
+        radio_tiff = ttk.Radiobutton(export_frame, text="Michael's TIFF (For Rulers Only).tiff", variable=self.export_format_var, value='tiff')
+        radio_tiff.pack(fill='x', pady=(0, 0))
+        
+        radio_svg = ttk.Radiobutton(export_frame, text="Casey's SVG (For the Rest of Us).svg", variable=self.export_format_var, value='svg')
+        radio_svg.pack(fill='x', pady=(0, 0))
+        
+        radio_jpg = ttk.Radiobutton(export_frame, text="Compatible JPG (For All).jpg", variable=self.export_format_var, value='jpg')
+        radio_jpg.pack(fill='x', pady=(0, 0))
         
         # Action buttons
         ttk.Button(self.left_panel, text="Generate County Map", command=self.generate_map).pack(fill='x', pady=(20, 5))
@@ -958,25 +1021,46 @@ class MainApplication:
             import datetime
             from pathlib import Path
             import os
+            import matplotlib as mpl
             
             # Get Downloads folder path
             downloads_path = str(Path.home() / "Downloads")
+            
+            # Get the selected export format
+            export_format = self.export_format_var.get()
             
             # Get current date and time in the desired format
             now = datetime.datetime.now()
             timestamp = now.strftime("%I_%M_%p_%m_%d_%Y")  # e.g., 12_49_PM_6_12_2025
             
-            # Create a meaningful filename
-            filename = f"MontanaCountyMaps_{timestamp}.tiff"
+            # Create a meaningful filename with dynamic extension
+            filename = f"MontanaSpecimensMaps_{timestamp}.{export_format}"
             file_path = os.path.join(downloads_path, filename)
             
-            # Save the figure
-            self.figure.savefig(file_path, format="tiff", dpi=300, bbox_inches='tight')
+            # Configure matplotlib settings based on export format
+            if export_format == 'svg':
+                # Check if SVG backend is available
+                try:
+                    import matplotlib.backends.backend_svg
+                    # Preserve text as editable elements in SVG
+                    mpl.rcParams['svg.fonttype'] = 'none'
+                except ImportError:
+                    messagebox.showerror("Error", 
+                        "SVG export is not available in this build.\n"
+                        "Please select TIFF or JPG format instead.")
+                    return
+            elif export_format in ['tiff', 'jpg']:
+                # High quality settings for TIFF and JPG
+                mpl.rcParams['font.family'] = 'serif'
+                mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
+            
+            # Save the figure with dynamic format
+            self.figure.savefig(file_path, format=export_format, dpi=300, bbox_inches='tight')
             
             # Show toast notification
             self.toast.show_toast(f"Maps saved as {filename}")
             
-            print(f"✅ TIFF maps saved as '{file_path}'")
+            print(f"✅ {export_format.upper()} maps saved as '{file_path}'")
             
         except Exception as e:
             messagebox.showerror("Error", 
@@ -985,6 +1069,9 @@ class MainApplication:
             )
 
     def on_window_resize(self, event=None):
+        # Maintain 23%/77% ratio when window is resized
+        self.set_panel_widths()
+        
         # Update the figure size to match the panel size
         w = self.right_panel.winfo_width() / 100
         h = self.right_panel.winfo_height() / 100
@@ -995,6 +1082,19 @@ class MainApplication:
             self.display_maps()
         else:
             self.canvas.draw()
+
+    def set_panel_widths(self):
+        """Set the left panel to 23% width and right panel to 77% width"""
+        try:
+            # Get the total width of the main container
+            total_width = self.main_container.winfo_width()
+            if total_width > 0:
+                # Calculate 23% for left panel (minus padding)
+                left_width = int(total_width * 0.23) - 10  # Subtract padding
+                self.left_panel_container.configure(width=left_width)
+                self.left_panel_container.pack_propagate(False)  # Prevent size changes
+        except Exception as e:
+            print(f"Warning: Could not set panel widths: {e}")
 
     def update_genus_dropdown(self, event=None):
         family = self.selected_family.get().strip()
